@@ -38,7 +38,7 @@
 </head>
 <body>
 <canvas id="c"></canvas>
-<div id="bar"><button id="fs" title="Full screen (F); W or X to exit">full screen</button><button id="fsx" title="Exit full screen" aria-label="Exit full screen">✕</button><button id="snd" title="Sound on/off (S)" aria-label="Sound on/off" aria-pressed="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H2v6h4l5 4z" fill="currentColor"/><g class="waves"><path d="M15.5 8.5a5 5 0 0 1 0 7"/><path d="M19 5a10 10 0 0 1 0 14"/></g><g class="x"><path d="m16 9 6 6"/><path d="m22 9-6 6"/></g></svg></button></div>
+<div id="bar"><button id="fs" title="Full screen (F); W or X to exit">full screen</button><button id="fsx" title="Exit full screen" aria-label="Exit full screen">✕</button><button id="snd" class="off" title="Sound on/off (S)" aria-label="Sound on/off" aria-pressed="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H2v6h4l5 4z" fill="currentColor"/><g class="waves"><path d="M15.5 8.5a5 5 0 0 1 0 7"/><path d="M19 5a10 10 0 0 1 0 14"/></g><g class="x"><path d="m16 9 6 6"/><path d="m22 9-6 6"/></g></svg></button></div>
 <div id="hint">Tap a ball to set it off (drag on to set off more). Drag on empty space to swish the balls around.<span class="keys"> Space pauses.</span></div>
 <script>
 // Port of the 2007 Processing sketch "boom" (boom.pde + balls.pde).
@@ -368,7 +368,7 @@ function hideHint() { hint.style.opacity = 0; }
 setTimeout(hideHint, 8000);
 
 // ---- sound (bonk0-1 for bumps, swirl0-8 for ignitions, as in the original) ----
-let actx = null, soundOn = true;
+let actx = null, soundOn = false; // sound starts off
 const bumpBufs = [], growBufs = [];
 ['touchend', 'click'].forEach(t => addEventListener(t, () => unlockAudio(), { passive: true }));
 function unlockAudio() {
@@ -392,14 +392,15 @@ sndBtn.addEventListener('click', () => { toggleSound(); sndBtn.blur(); });
 
 // ---- full screen: button or F to enter; W or X (or Esc) to exit ----
 const de = document.documentElement;
-// Touch screens: no browser full screen (its swipe-down-to-exit gesture fights the paddle);
-// "full screen" just clears the controls away, and the ✕ brings them back.
-const touchOnly = matchMedia('(pointer: coarse)').matches;
+// Real browser full screen wherever it exists (desktop, iPad); where it doesn't (iPhone Safari)
+// "full screen" just clears the controls away. Either way the ✕ / W / X brings them back.
+// Touches on the canvas cancel the browser's own gestures (incl. swipe-down-to-exit) so they can't fight the paddle.
+['touchstart', 'touchmove'].forEach(t => cv.addEventListener(t, e => e.preventDefault(), { passive: false }));
 const fsEl = () => document.fullscreenElement || document.webkitFullscreenElement;
 const setFull = on => document.body.classList.toggle('full', on);
 function enterFull() {
   hideHint(); setFull(true);
-  if (touchOnly || fsEl()) return;
+  if (fsEl() || !(document.fullscreenEnabled || document.webkitFullscreenEnabled)) return;
   (de.requestFullscreen || de.webkitRequestFullscreen)?.call(de)?.catch?.(() => {});
 }
 function exitFull() {

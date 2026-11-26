@@ -150,7 +150,11 @@ function collide() {
     if (collisionsQ && a.state === 0 && b.state === 0 && dd > 0 && dd <= sss) {
       // smash (new): closing speed, including swish drift, above smashSpeed sets both off
       const closing = -((a.dx + a.bx - b.dx - b.bx) * dX + (a.dy + a.by - b.dy - b.by) * dY) / Math.sqrt(dd);
-      if (closing > smashSpeed) { a.state = 1; b.state = 1; doGrow = true; continue; }
+      if (closing > smashSpeed) { // both go off and share momentum (equal masses stick together)
+        a.dx = b.dx = (a.dx + b.dx) / 2; a.dy = b.dy = (a.dy + b.dy) / 2; // steady drift, as in the original
+        a.bx = b.bx = (a.bx + b.bx) / 2; a.by = b.by = (a.by + b.by) / 2; // swish part, still decays
+        a.state = 1; b.state = 1; doGrow = true; continue;
+      }
       const tt = -((a.dx - b.dx) * dX + (a.dy - b.dy) * dY) / dd;
       if (tt > 0) {
         xV[i] += tt*dX; xV[j] -= tt*dX; yV[i] += tt*dY; yV[j] -= tt*dY;

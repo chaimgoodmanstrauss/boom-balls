@@ -1,0 +1,272 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Boom</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #001a1a; overflow: hidden; }
+  body { display: flex; align-items: center; justify-content: center; touch-action: none;
+         font: 13px/1.3 system-ui, sans-serif; color: #7fbfbf; }
+  canvas { display: block; cursor: crosshair; touch-action: none; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+  #snd { position: fixed; top: 10px; right: 12px; background: none; border: 1px solid #336666;
+         color: #7fbfbf; border-radius: 4px; padding: 3px 8px; cursor: pointer; font: inherit; }
+  #hint { position: fixed; bottom: 10px; left: 0; right: 0; text-align: center; pointer-events: none;
+          transition: opacity 1s; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<button id="snd" title="Toggle sound (S)">sound: on</button>
+<div id="hint">Tap a ball to set it off (drag on to set off more). Drag on empty space to swish the balls around. Space pauses.</div>
+<script>
+// Port of the 2007 Processing sketch "boom" (boom.pde + balls.pde).
+// Constants keep the original's integer-division values (e.g. 70/30 = 2).
+// The field fills the window; its shorter side is 600 units (the original's size),
+// and the ball count scales with area to keep the original density of 120 per 600x600.
+const baseSize = 600, baseBalls = 120, framepersec = 30;
+let winx = baseSize, winy = baseSize, numBalls = baseBalls;
+const minBallSpeed = 0, maxBallSpeed = 2, growthSpeed = 3, shrinkSpeed = 4;
+const normalBallSize = 10, maxBallSize = 50, minBallSize = 5;
+const collisionsQ = true, chainReactionQ = true, spontaneousCombustionQ = true, reentryQ = true;
+const holdOffOnSpontaneousCombustionAfterClickQ = true, onlyOneCombustionAtATimeQ = true;
+const holdOffFor = 300, keepMovingQ = true, bumpWait = 10;
+// swish (new): a drag on empty space acts like a paddle in a fluid
+const swishRadius = 45, swishPush = 0.15, swishSteer = 0.05, swishDecay = 0.97, swishMax = 20;
+const smashSpeed = 5; // closing speed that sets two colliding balls off (unswished max is 4)
+
+let combustingQ = spontaneousCombustionQ, holdCheck = 0, check = 0;
+const rand = (a, b) => a + Math.random() * (b - a);
+
+function randomColor() { // HSB: hue 0–.25 (red→yellow-green), sat .85–.98, bright 1
+  return `hsl(${rand(0, 90)}, 100%, ${50 * (2 - rand(.85, .98))}%)`;
+}
+
+class Ball {
+  constructor() {
+    this.x = rand(normalBallSize, winx - normalBallSize);
+    this.y = rand(normalBallSize, winy - normalBallSize);
+    const ang = rand(0, 6.29), speed = rand(minBallSpeed, maxBallSpeed);
+    this.dx = speed * Math.cos(ang); this.dy = speed * Math.sin(ang);
+    this.setBall();
+  }
+  setBall() { this.bx = 0; this.by = 0; this.ss = normalBallSize; this.col = randomColor(); this.alph = 100; this.state = 0; }
+  resetBall() { // send a ball in from a side
+    let ang = 0;
+    switch (Math.floor(rand(0, 3.999))) {
+      case 0: this.x = -normalBallSize; this.y = rand(3*normalBallSize, winy - 3*normalBallSize); ang = rand(-1.4, 1.4); break;
+      case 1: this.x = winx + normalBallSize; this.y = rand(3*normalBallSize, winy - 3*normalBallSize); ang = rand(-1.4, 1.4) + Math.PI; break;
+      case 2: this.y = -normalBallSize; this.x = rand(3*normalBallSize, winx - 3*normalBallSize); ang = rand(-1.4, 1.4) + Math.PI*3/2; break;
+      case 3: this.y = winy + normalBallSize; this.x = rand(3*normalBallSize, winx - 3*normalBallSize); ang = rand(-1.4, 1.4) + Math.PI/2; break;
+    }
+    this.dx = maxBallSpeed * Math.cos(ang); this.dy = maxBallSpeed * Math.sin(ang);
+    this.setBall();
+  }
+  move() { if (keepMovingQ) { this.x += this.dx; this.y += this.dy; } }
+  drift() { // swish: extra flow velocity on top of the original physics, decays each frame
+    if (this.bx === 0 && this.by === 0) return;
+    if (this.state === 0) {
+      if (this.x <= this.ss && this.bx < 0) this.bx = -this.bx;
+      if (this.y <= this.ss && this.by < 0) this.by = -this.by;
+      if (this.x >= winx - this.ss && this.bx > 0) this.bx = -this.bx;
+      if (this.y >= winy - this.ss && this.by > 0) this.by = -this.by;
+    }
+    this.x += this.bx; this.y += this.by;
+    this.bx *= swishDecay; this.by *= swishDecay;
+    if (Math.abs(this.bx) + Math.abs(this.by) < .01) this.bx = this.by = 0;
+  }
+  update() {
+    this.drift();
+    switch (this.state) {
+      case 0: {
+        if (this.x <= this.ss && this.dx < 0) this.dx = -this.dx;
+        if (this.y <= this.ss && this.dy < 0) this.dy = -this.dy;
+        if (this.x >= winx - this.ss && this.dx > 0) this.dx = -this.dx;
+        if (this.y >= winy - this.ss && this.dy > 0) this.dy = -this.dy;
+        const dd = Math.hypot(this.dx, this.dy);
+        if (dd > maxBallSpeed) { this.dx *= maxBallSpeed / dd; this.dy *= maxBallSpeed / dd; }
+        this.x += this.dx; this.y += this.dy;
+        if (combustingQ && Math.random() < .0002) { this.state = 1; playGrow(); }
+        break;
+      }
+      case 1: this.ss += growthSpeed; this.alph += 2*growthSpeed; this.move(); if (this.ss >= maxBallSize) this.state = 2; break;
+      case 2: this.ss -= shrinkSpeed; this.alph += shrinkSpeed; this.move(); if (this.ss <= minBallSize) this.state = 3; break;
+      case 3: this.alph++; this.move(); if (this.alph > 255) this.state = 4; break;
+      case 4: if (reentryQ && Math.random() < .005) this.resetBall(); break;
+    }
+  }
+  display() {
+    if (this.state > 3) return;
+    ctx.fillStyle = this.col;
+    ctx.beginPath(); ctx.arc(this.x, this.y, Math.max(0, Math.trunc(this.ss)), 0, 2*Math.PI); ctx.fill();
+    if (this.state === 3) { // burnt-out ember: darken it
+      ctx.fillStyle = 'rgba(0,0,0,0.4)'; ctx.fill();
+    }
+  }
+}
+
+let balls = [], bumpCounter = [];
+function syncBalls(fx, fy) { // match ball count to field area; stretch positions to the new field
+  numBalls = Math.max(1, Math.round(baseBalls * winx * winy / (baseSize * baseSize)));
+  if (balls.length > numBalls) { // drop burnt-out balls first
+    balls.sort((a, b) => (b.state === 4) - (a.state === 4));
+    balls = balls.slice(balls.length - numBalls);
+  }
+  for (const b of balls) { b.x *= fx; b.y *= fy; }
+  while (balls.length < numBalls) balls.push(new Ball());
+  for (const b of balls) if (b.state === 0) {
+    b.x = Math.min(Math.max(b.x, b.ss), winx - b.ss);
+    b.y = Math.min(Math.max(b.y, b.ss), winy - b.ss);
+  }
+  bumpCounter = Array.from({ length: numBalls }, () => new Int16Array(numBalls));
+}
+
+function collide() {
+  const xV = new Float64Array(numBalls), yV = new Float64Array(numBalls);
+  let doBump = false, doGrow = false;
+  for (let i = 0; i < numBalls; i++) for (let j = i + 1; j < numBalls; j++) {
+    const a = balls[i], b = balls[j];
+    if (bumpCounter[i][j]) bumpCounter[i][j]--;
+    const dX = a.x - b.x, dY = a.y - b.y, dd = dX*dX + dY*dY;
+    const sss = (a.ss + b.ss) ** 2;
+    if (collisionsQ && a.state === 0 && b.state === 0 && dd > 0 && dd <= sss) {
+      // smash (new): closing speed, including swish drift, above smashSpeed sets both off
+      const closing = -((a.dx + a.bx - b.dx - b.bx) * dX + (a.dy + a.by - b.dy - b.by) * dY) / Math.sqrt(dd);
+      if (closing > smashSpeed) { a.state = 1; b.state = 1; doGrow = true; continue; }
+      const tt = -((a.dx - b.dx) * dX + (a.dy - b.dy) * dY) / dd;
+      if (tt > 0) {
+        xV[i] += tt*dX; xV[j] -= tt*dX; yV[i] += tt*dY; yV[j] -= tt*dY;
+        if (!bumpCounter[i][j]) { doBump = true; bumpCounter[i][j] = bumpWait; }
+      }
+    }
+    const ignite = (src, dst) => {
+      if (chainReactionQ && (src.state === 1 || src.state === 2) && dst.state === 0 && dd <= sss) {
+        dst.state = 1; doGrow = true;
+        if ((holdOffOnSpontaneousCombustionAfterClickQ && !combustingQ) || onlyOneCombustionAtATimeQ) holdCheck = check;
+      }
+    };
+    ignite(a, b); ignite(b, a);
+  }
+  if (doBump) playBump();
+  if (doGrow) playGrow();
+  for (let i = 0; i < numBalls; i++) { balls[i].dx += xV[i]; balls[i].dy += yV[i]; }
+}
+
+// ---- drawing / timing ----
+const cv = document.getElementById('c'), ctx = cv.getContext('2d');
+let scale = 1;
+function resize() {
+  const w = innerWidth, h = innerHeight, dpr = devicePixelRatio || 1;
+  cv.style.width = w + 'px'; cv.style.height = h + 'px';
+  cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr);
+  scale = Math.min(w, h) / baseSize;           // CSS px per field unit
+  const ox = winx, oy = winy;
+  winx = w / scale; winy = h / scale;
+  ctx.setTransform(scale * dpr, 0, 0, scale * dpr, 0, 0);
+  syncBalls(winx / ox, winy / oy);
+}
+addEventListener('resize', resize); resize();
+
+function step() {
+  check++;
+  if (spontaneousCombustionQ && !combustingQ && check >= holdCheck + holdOffFor) combustingQ = true;
+  collide();
+  for (const b of balls) b.update();
+}
+function render() {
+  ctx.fillStyle = '#003333'; ctx.fillRect(0, 0, winx, winy);
+  for (const b of balls) b.display();
+}
+let paused = false, last = performance.now(), acc = 0;
+const dt = 1000 / framepersec;
+function frame(now) {
+  acc += Math.min(now - last, 250); last = now;
+  if (!paused) while (acc >= dt) { step(); acc -= dt; } else acc = 0;
+  render();
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+
+// ---- mouse / touch (multi-touch: each pointer is its own igniter or paddle) ----
+const pointers = new Map(); // pointerId -> { mode: 'ignite' | 'swish', x, y }
+function toSim(e) {
+  const r = cv.getBoundingClientRect();
+  return [(e.clientX - r.left) / scale, (e.clientY - r.top) / scale];
+}
+const slop = e => e.pointerType === 'touch' ? 12 : 5; // fingers get a bigger target
+function hitsBall(mx, my, pad) {
+  return balls.some(b => b.state === 0 && (mx - b.x) ** 2 + (my - b.y) ** 2 <= (b.ss + pad) ** 2);
+}
+function doMouseDown(mx, my, pad) {
+  for (const b of balls) {
+    if ((mx - b.x) ** 2 + (my - b.y) ** 2 <= (b.ss + pad) ** 2 && b.state === 0) { b.state = 1; playGrow(); }
+  }
+  holdCheck = check;
+  if (holdOffOnSpontaneousCombustionAfterClickQ) combustingQ = false;
+}
+function swish(x0, y0, x1, y1) {
+  const vx = x1 - x0, vy = y1 - y0, L2 = vx*vx + vy*vy;
+  if (L2 === 0) return;
+  for (const b of balls) {
+    if (b.state > 3) continue;
+    const t = Math.max(0, Math.min(1, ((b.x - x0) * vx + (b.y - y0) * vy) / L2));
+    const d = Math.hypot(b.x - (x0 + t*vx), b.y - (y0 + t*vy));
+    if (d >= swishRadius + b.ss) continue;
+    const w = (1 - d / (swishRadius + b.ss)) ** 2;
+    b.bx += vx * w * swishPush; b.by += vy * w * swishPush;
+    const m = Math.hypot(b.bx, b.by);
+    if (m > swishMax) { b.bx *= swishMax / m; b.by *= swishMax / m; }
+    b.dx += vx * w * swishSteer; b.dy += vy * w * swishSteer; // re-aims; still capped at maxBallSpeed
+  }
+}
+cv.addEventListener('pointerdown', e => {
+  e.preventDefault();
+  cv.setPointerCapture(e.pointerId); unlockAudio(); hideHint();
+  const [x, y] = toSim(e), pad = slop(e);
+  const mode = hitsBall(x, y, pad) ? 'ignite' : 'swish';
+  pointers.set(e.pointerId, { mode, x, y, pad });
+  if (mode === 'ignite') doMouseDown(x, y, pad);
+});
+cv.addEventListener('pointermove', e => {
+  const p = pointers.get(e.pointerId);
+  if (!p) return;
+  const [x, y] = toSim(e);
+  if (p.mode === 'ignite') doMouseDown(x, y, p.pad); else swish(p.x, p.y, x, y);
+  p.x = x; p.y = y;
+});
+const lift = e => pointers.delete(e.pointerId);
+cv.addEventListener('pointerup', lift); cv.addEventListener('pointercancel', lift);
+cv.addEventListener('contextmenu', e => e.preventDefault());
+addEventListener('keydown', e => {
+  if (e.key === ' ') { paused = !paused; e.preventDefault(); }
+  else if (e.key === 's' || e.key === 'S') toggleSound();
+});
+const hint = document.getElementById('hint');
+function hideHint() { hint.style.opacity = 0; }
+setTimeout(hideHint, 8000);
+
+// ---- sound (bonk0-1 for bumps, swirl0-8 for ignitions, as in the original) ----
+let actx = null, soundOn = true;
+const bumpBufs = [], growBufs = [];
+function unlockAudio() {
+  if (actx) { if (actx.state === 'suspended') actx.resume(); return; }
+  actx = new (window.AudioContext || window.webkitAudioContext)();
+  const load = (name, arr, i) => fetch('sounds/' + name).then(r => r.arrayBuffer())
+    .then(buf => actx.decodeAudioData(buf)).then(d => { arr[i] = d; }).catch(() => {});
+  for (let i = 0; i < 2; i++) load(`bonk${i}.mp3`, bumpBufs, i);
+  for (let i = 0; i < 9; i++) load(`swirl${i}.mp3`, growBufs, i);
+}
+function play(arr, n) {
+  if (!soundOn || !actx) return;
+  const buf = arr[Math.floor(Math.random() * n)];
+  if (!buf) return;
+  const src = actx.createBufferSource(); src.buffer = buf; src.connect(actx.destination); src.start();
+}
+const playBump = () => play(bumpBufs, 2), playGrow = () => play(growBufs, 9);
+const sndBtn = document.getElementById('snd');
+function toggleSound() { soundOn = !soundOn; sndBtn.textContent = 'sound: ' + (soundOn ? 'on' : 'off'); if (soundOn) unlockAudio(); }
+sndBtn.addEventListener('click', () => { toggleSound(); sndBtn.blur(); });
+document.addEventListener('visibilitychange', () => { last = performance.now(); acc = 0; });
+</script>
+</body>
+</html>

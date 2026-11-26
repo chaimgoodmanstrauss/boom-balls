@@ -1,0 +1,8 @@
+{
+  "name": "Boom",
+  "cat": "Toys",
+  "icon": "rings",
+  "desc": "Bouncing balls that blow up in chain reactions. Click or drag across one to set it off. A web port of a 2007 Processing sketch.",
+  "path": "boom/",
+  "live": false
+}

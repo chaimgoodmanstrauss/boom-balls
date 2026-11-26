@@ -1,8 +1,9 @@
 {
-  "name": "Boom",
+  "name": "Boom Balls",
   "cat": "Toys",
   "icon": "rings",
-  "desc": "Bouncing balls that blow up in chain reactions. Click or drag across one to set it off. A web port of a 2007 Processing sketch.",
-  "path": "boom/",
-  "live": false
+  "desc": "Bouncing balls that blow up in chain reactions. Tap one to set it off, or swish them around with the paddle and smash them together.",
+  "path": "boom-balls/",
+  "live": false,
+  "img": "icons/boom-balls.jpg"
 }

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
-<title>Boom</title>
+<title>Boom Balls</title>
 <style>
   html, body { margin: 0; height: 100%; background: #001a1a; overflow: hidden; }
   body { display: flex; align-items: center; justify-content: center; touch-action: none;
@@ -26,23 +26,33 @@
 // and the ball count scales with area to keep the original density of 120 per 600x600.
 const baseSize = 600, baseBalls = 120, framepersec = 30;
 let winx = baseSize, winy = baseSize, numBalls = baseBalls;
-const minBallSpeed = 0, maxBallSpeed = 2, growthSpeed = 3, shrinkSpeed = 4;
+const minBallSpeed = 0, maxBallSpeed = 2, growthSpeed = 1.5, shrinkSpeed = 4;
 const normalBallSize = 10, maxBallSize = 50, minBallSize = 5;
 const collisionsQ = true, chainReactionQ = true, spontaneousCombustionQ = true, reentryQ = true;
 const holdOffOnSpontaneousCombustionAfterClickQ = true, onlyOneCombustionAtATimeQ = true;
 const holdOffFor = 300, keepMovingQ = true, bumpWait = 10;
 // swish (new): a drag on empty space acts like a paddle in a fluid
 const swishRadius = 45, swishPush = 0.15, swishSteer = 0.05, swishDecay = 0.97, swishMax = 20;
-const explodeAlpha = 0.55; // opacity of exploding balls (new)
+const explodeAlpha = 0.55, emberShade = 0.6; // opacity at full explosion radius; ember brightness (new)
 const smashSpeed = 5; // closing speed that sets two colliding balls off (unswished max is 4)
 
 let combustingQ = spontaneousCombustionQ, holdCheck = 0, check = 0;
 const rand = (a, b) => a + Math.random() * (b - a);
 
+function hslRgb(h, l) { // saturation 100%; h in degrees, l in 0..1 -> [r,g,b] 0..255
+  const f = n => { const k = (n + h / 30) % 12; return 255 * (l - Math.min(l, 1 - l) * Math.max(-1, Math.min(k - 3, 9 - k, 1))); };
+  return [f(0), f(8), f(4)];
+}
 function randomColor() { // HSB: hue 0–.25 (red→yellow-green), sat .85–.98, bright 1
-  const h = rand(0, 90), l = 50 * (2 - rand(.85, .98));
-  return { solid: `hsl(${h}, 100%, ${l}%)`, // exploding: lighter and see-through
-           boom: `hsla(${h}, 100%, ${Math.min(l + 18, 88)}%, ${explodeAlpha})` };
+  const h = rand(0, 90), l = (2 - rand(.85, .98)) / 2;
+  const base = hslRgb(h, l);
+  return { base,
+           light: hslRgb(h, Math.min(l + .18, .88)),  // look at full explosion radius
+           ember: base.map(c => c * emberShade) };    // burnt-out look
+}
+const lerp = (a, b, t) => a + (b - a) * t;
+function rgba(c1, c2, t, a) {
+  return `rgba(${Math.round(lerp(c1[0], c2[0], t))},${Math.round(lerp(c1[1], c2[1], t))},${Math.round(lerp(c1[2], c2[2], t))},${a})`;
 }
 
 class Ball {
@@ -53,7 +63,7 @@ class Ball {
     this.dx = speed * Math.cos(ang); this.dy = speed * Math.sin(ang);
     this.setBall();
   }
-  setBall() { this.bx = 0; this.by = 0; this.ss = normalBallSize; const c = randomColor(); this.col = c.solid; this.boomCol = c.boom; this.alph = 100; this.state = 0; }
+  setBall() { this.bx = 0; this.by = 0; this.ss = normalBallSize; this.pal = randomColor(); this.col = rgba(this.pal.base, this.pal.base, 0, 1); this.alph = 100; this.state = 0; }
   resetBall() { // send a ball in from a side
     let ang = 0;
     switch (Math.floor(rand(0, 3.999))) {
@@ -100,11 +110,16 @@ class Ball {
   }
   display() {
     if (this.state > 3) return;
-    ctx.fillStyle = (this.state === 1 || this.state === 2) ? this.boomCol : this.col;
+    const P = this.pal, A = this.ss * this.ss;
+    if (this.state === 1) { // growing: ramp by area from the ball's colour to the light, see-through look
+      const t = Math.max(0, Math.min(1, (A - normalBallSize ** 2) / (maxBallSize ** 2 - normalBallSize ** 2)));
+      ctx.fillStyle = rgba(P.base, P.light, t, lerp(1, explodeAlpha, t));
+    } else if (this.state === 2) { // shrinking: ramp by area from the full-radius look to the ember
+      const t = Math.max(0, Math.min(1, (A - minBallSize ** 2) / (maxBallSize ** 2 - minBallSize ** 2)));
+      ctx.fillStyle = rgba(P.ember, P.light, t, lerp(1, explodeAlpha, t));
+    } else if (this.state === 3) ctx.fillStyle = rgba(P.ember, P.ember, 0, 1);
+    else ctx.fillStyle = this.col;
     ctx.beginPath(); ctx.arc(this.x, this.y, Math.max(0, Math.trunc(this.ss)), 0, 2*Math.PI); ctx.fill();
-    if (this.state === 3) { // burnt-out ember: darken it
-      ctx.fillStyle = 'rgba(0,0,0,0.4)'; ctx.fill();
-    }
   }
 }
 
@@ -234,7 +249,7 @@ function drawPaddle(p) {
   ctx.beginPath();
   ctx.arc(cx, cy, paddleR, p.ang + Math.PI - paddleHalf, p.ang + Math.PI + paddleHalf);
   ctx.lineCap = 'round';
-  ctx.lineWidth = paddleW; ctx.strokeStyle = p.down ? 'rgba(230,250,250,0.9)' : 'rgba(200,235,235,0.5)';
+  ctx.lineWidth = paddleW; ctx.strokeStyle = p.down ? 'rgb(235,250,250)' : 'rgba(200,235,235,0.25)';
   ctx.stroke();
 }
 let paused = false, last = performance.now(), acc = 0;

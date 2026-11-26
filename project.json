@@ -4,6 +4,6 @@
   "icon": "rings",
   "desc": "Bouncing balls that blow up in chain reactions. Tap one to set it off, or swish them around with the paddle and smash them together.",
   "path": "boom-balls/",
-  "live": false,
+  "live": true,
   "img": "icons/boom-balls.jpg"
 }

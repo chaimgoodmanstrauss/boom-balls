@@ -2,29 +2,48 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <title>Boom Balls</title>
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Boom Balls">
 <style>
-  html, body { margin: 0; height: 100%; background: #001a1a; overflow: hidden; }
+  html, body { margin: 0; height: 100%; background: #001a1a; overflow: hidden; overscroll-behavior: none; }
+  body { position: fixed; inset: 0; -webkit-text-size-adjust: 100%; }
   body { display: flex; align-items: center; justify-content: center; touch-action: none;
          font: 13px/1.3 system-ui, sans-serif; color: #7fbfbf; }
   canvas { display: block; cursor: none; touch-action: none; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
-  #snd { position: fixed; top: 10px; right: 12px; background: none; border: 1px solid #336666;
-         color: #7fbfbf; border-radius: 4px; padding: 3px 8px; cursor: pointer; font: inherit; }
+  #bar { position: fixed; top: 10px; right: 12px; display: flex; gap: 8px; }
+  #bar button { background: rgba(0,26,26,.6); border: 1px solid #336666; color: #7fbfbf; border-radius: 4px;
+                padding: 3px 8px; cursor: pointer; font: inherit; }
+  #fsx { display: none; position: fixed; top: 10px; right: 12px; background: rgba(0,26,26,.4); border: 1px solid #224444;
+         color: #5f9f9f; border-radius: 50%; width: 36px; height: 36px; font-size: 18px; cursor: pointer; }
+  :fullscreen #bar, :fullscreen #hint { display: none; }
+  @media (pointer: coarse) { :fullscreen #fsx { display: block; } } /* touch: no keyboard, so a small exit button */
   #hint { position: fixed; bottom: 10px; left: 0; right: 0; text-align: center; pointer-events: none;
-          transition: opacity 1s; }
+          transition: opacity 1s; padding: 0 12px; }
+  /* phones / touch screens: bigger controls and text, clear of the notch and home bar */
+  @media (pointer: coarse) {
+    body { font-size: 17px; }
+    #bar { top: calc(10px + env(safe-area-inset-top)); right: calc(10px + env(safe-area-inset-right)); }
+    #bar button { padding: 10px 16px; border-radius: 8px; }
+    #hint { bottom: calc(14px + env(safe-area-inset-bottom)); }
+  }
+  @media (pointer: coarse) { .keys { display: none; } }
 </style>
 </head>
 <body>
 <canvas id="c"></canvas>
-<button id="snd" title="Toggle sound (S)">sound: on</button>
-<div id="hint">Tap a ball to set it off (drag on to set off more). Drag on empty space to swish the balls around. Space pauses.</div>
+<div id="bar"><button id="fs" title="Full screen (F); W or X to exit">full screen</button><button id="snd" title="Toggle sound (S)">sound: on</button></div>
+<button id="fsx" title="Exit full screen">✕</button>
+<div id="hint">Tap a ball to set it off (drag on to set off more). Drag on empty space to swish the balls around.<span class="keys"> Space pauses.</span></div>
 <script>
 // Port of the 2007 Processing sketch "boom" (boom.pde + balls.pde).
 // Constants keep the original's integer-division values (e.g. 70/30 = 2).
 // The field fills the window; its shorter side is 600 units (the original's size),
 // and the ball count scales with area to keep the original density of 120 per 600x600.
-const baseSize = 600, baseBalls = 120, framepersec = 30;
+const baseSize = 600, baseBalls = 120, framepersec = 30, minScale = 1.3;
 let winx = baseSize, winy = baseSize, numBalls = baseBalls;
 const minBallSpeed = 0, maxBallSpeed = 2, growthSpeed = 1.5, shrinkSpeed = 4;
 const normalBallSize = 10, maxBallSize = 50, minBallSize = 5;
@@ -181,7 +200,8 @@ function resize() {
   const w = innerWidth, h = innerHeight, dpr = devicePixelRatio || 1;
   cv.style.width = w + 'px'; cv.style.height = h + 'px';
   cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr);
-  scale = Math.min(w, h) / baseSize;           // CSS px per field unit
+  // CSS px per field unit; never below minScale so balls stay big on phones (iPhone: ~2x the old size)
+  scale = Math.max(Math.min(w, h) / baseSize, minScale);
   const ox = winx, oy = winy;
   winx = w / scale; winy = h / scale;
   ctx.setTransform(scale * dpr, 0, 0, scale * dpr, 0, 0);
@@ -326,6 +346,8 @@ cv.addEventListener('contextmenu', e => e.preventDefault());
 addEventListener('keydown', e => {
   if (e.key === ' ') { paused = !paused; e.preventDefault(); }
   else if (e.key === 's' || e.key === 'S') toggleSound();
+  else if (e.key === 'f' || e.key === 'F') enterFull();
+  else if ('wWxX'.includes(e.key) && e.key.length === 1) exitFull();
 });
 const hint = document.getElementById('hint');
 function hideHint() { hint.style.opacity = 0; }
@@ -334,6 +356,7 @@ setTimeout(hideHint, 8000);
 // ---- sound (bonk0-1 for bumps, swirl0-8 for ignitions, as in the original) ----
 let actx = null, soundOn = true;
 const bumpBufs = [], growBufs = [];
+['touchend', 'click'].forEach(t => addEventListener(t, () => unlockAudio(), { passive: true }));
 function unlockAudio() {
   if (actx) { if (actx.state === 'suspended') actx.resume(); return; }
   actx = new (window.AudioContext || window.webkitAudioContext)();
@@ -352,6 +375,23 @@ const playBump = () => play(bumpBufs, 2), playGrow = () => play(growBufs, 9);
 const sndBtn = document.getElementById('snd');
 function toggleSound() { soundOn = !soundOn; sndBtn.textContent = 'sound: ' + (soundOn ? 'on' : 'off'); if (soundOn) unlockAudio(); }
 sndBtn.addEventListener('click', () => { toggleSound(); sndBtn.blur(); });
+
+// ---- full screen: button or F to enter; W or X (or Esc) to exit ----
+const de = document.documentElement;
+const fsEl = () => document.fullscreenElement || document.webkitFullscreenElement;
+function enterFull() {
+  if (fsEl()) return;
+  (de.requestFullscreen || de.webkitRequestFullscreen)?.call(de)?.catch?.(() => {});
+}
+function exitFull() {
+  if (!fsEl()) return;
+  (document.exitFullscreen || document.webkitExitFullscreen)?.call(document)?.catch?.(() => {});
+}
+const fsBtn = document.getElementById('fs');
+if (!(document.fullscreenEnabled || document.webkitFullscreenEnabled)) fsBtn.style.display = 'none'; // e.g. iPhone Safari
+fsBtn.addEventListener('click', () => { enterFull(); fsBtn.blur(); });
+document.getElementById('fsx').addEventListener('click', exitFull);
+['fullscreenchange', 'webkitfullscreenchange'].forEach(t => document.addEventListener(t, () => { if (fsEl()) hideHint(); }));
 document.addEventListener('visibilitychange', () => { last = performance.now(); acc = 0; });
 </script>
 </body>

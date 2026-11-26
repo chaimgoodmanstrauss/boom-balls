@@ -8,7 +8,7 @@
   html, body { margin: 0; height: 100%; background: #001a1a; overflow: hidden; }
   body { display: flex; align-items: center; justify-content: center; touch-action: none;
          font: 13px/1.3 system-ui, sans-serif; color: #7fbfbf; }
-  canvas { display: block; cursor: crosshair; touch-action: none; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+  canvas { display: block; cursor: none; touch-action: none; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
   #snd { position: fixed; top: 10px; right: 12px; background: none; border: 1px solid #336666;
          color: #7fbfbf; border-radius: 4px; padding: 3px 8px; cursor: pointer; font: inherit; }
   #hint { position: fixed; bottom: 10px; left: 0; right: 0; text-align: center; pointer-events: none;
@@ -33,13 +33,16 @@ const holdOffOnSpontaneousCombustionAfterClickQ = true, onlyOneCombustionAtATime
 const holdOffFor = 300, keepMovingQ = true, bumpWait = 10;
 // swish (new): a drag on empty space acts like a paddle in a fluid
 const swishRadius = 45, swishPush = 0.15, swishSteer = 0.05, swishDecay = 0.97, swishMax = 20;
+const explodeAlpha = 0.55; // opacity of exploding balls (new)
 const smashSpeed = 5; // closing speed that sets two colliding balls off (unswished max is 4)
 
 let combustingQ = spontaneousCombustionQ, holdCheck = 0, check = 0;
 const rand = (a, b) => a + Math.random() * (b - a);
 
 function randomColor() { // HSB: hue 0–.25 (red→yellow-green), sat .85–.98, bright 1
-  return `hsl(${rand(0, 90)}, 100%, ${50 * (2 - rand(.85, .98))}%)`;
+  const h = rand(0, 90), l = 50 * (2 - rand(.85, .98));
+  return { solid: `hsl(${h}, 100%, ${l}%)`, // exploding: lighter and see-through
+           boom: `hsla(${h}, 100%, ${Math.min(l + 18, 88)}%, ${explodeAlpha})` };
 }
 
 class Ball {
@@ -50,7 +53,7 @@ class Ball {
     this.dx = speed * Math.cos(ang); this.dy = speed * Math.sin(ang);
     this.setBall();
   }
-  setBall() { this.bx = 0; this.by = 0; this.ss = normalBallSize; this.col = randomColor(); this.alph = 100; this.state = 0; }
+  setBall() { this.bx = 0; this.by = 0; this.ss = normalBallSize; const c = randomColor(); this.col = c.solid; this.boomCol = c.boom; this.alph = 100; this.state = 0; }
   resetBall() { // send a ball in from a side
     let ang = 0;
     switch (Math.floor(rand(0, 3.999))) {
@@ -97,7 +100,7 @@ class Ball {
   }
   display() {
     if (this.state > 3) return;
-    ctx.fillStyle = this.col;
+    ctx.fillStyle = (this.state === 1 || this.state === 2) ? this.boomCol : this.col;
     ctx.beginPath(); ctx.arc(this.x, this.y, Math.max(0, Math.trunc(this.ss)), 0, 2*Math.PI); ctx.fill();
     if (this.state === 3) { // burnt-out ember: darken it
       ctx.fillStyle = 'rgba(0,0,0,0.4)'; ctx.fill();
@@ -172,10 +175,67 @@ function step() {
   if (spontaneousCombustionQ && !combustingQ && check >= holdCheck + holdOffFor) combustingQ = true;
   collide();
   for (const b of balls) b.update();
+  paddleFrame();
 }
 function render() {
   ctx.fillStyle = '#003333'; ctx.fillRect(0, 0, winx, winy);
   for (const b of balls) b.display();
+  for (const p of paddles.values()) drawPaddle(p);
+}
+// ---- rendered cursor: a shallow C-shaped paddle seen from above, hollow facing its motion ----
+const paddles = new Map(); // pointerId -> { x, y, vx, vy, ang, down }
+const paddleR = 30, paddleHalf = 0.6, paddleW = 3.5; // arc radius, half-angle, stroke: ~34-unit chord, ~5-unit dip
+const paddleBounce = 0.8; // restitution when a ball hits the paddle
+function movePaddle(id, x, y, down) {
+  let p = paddles.get(id);
+  if (!p) { p = { x, y, vx: 0, vy: 0, fx: 0, fy: 0, lx: x, ly: y, ang: -Math.PI / 2, down }; paddles.set(id, p); }
+  p.vx = p.vx * 0.7 + (x - p.x) * 0.3; p.vy = p.vy * 0.7 + (y - p.y) * 0.3; // smoothed heading
+  if (Math.hypot(p.vx, p.vy) > 0.4) p.ang = Math.atan2(p.vy, p.vx);           // keep last heading when still
+  p.down = down;
+  p.solid = down && pointers.get(id)?.mode === 'swish';
+  // sweep in small steps so a fast paddle can't pass through a ball
+  const x0 = p.x, y0 = p.y, n = p.solid ? Math.max(1, Math.ceil(Math.hypot(x - x0, y - y0) / 3)) : 1;
+  for (let k = 1; k <= n; k++) {
+    p.x = x0 + (x - x0) * k / n; p.y = y0 + (y - y0) * k / n;
+    if (p.solid) paddleHit(p);
+  }
+}
+function paddleFrame() { // per sim frame: paddle velocity, and balls running into a still paddle
+  for (const p of paddles.values()) {
+    p.fx = p.x - p.lx; p.fy = p.y - p.ly; p.lx = p.x; p.ly = p.y;
+    if (p.solid) paddleHit(p);
+  }
+}
+function paddleHit(p) { // solid paddle: push balls out of the arc and bounce them off it
+  const cx = p.x + Math.cos(p.ang) * paddleR, cy = p.y + Math.sin(p.ang) * paddleR, mid = p.ang + Math.PI;
+  for (const b of balls) {
+    if (b.state !== 0) continue;
+    let a = Math.atan2(b.y - cy, b.x - cx) - mid;
+    a = Math.max(-paddleHalf, Math.min(paddleHalf, Math.atan2(Math.sin(a), Math.cos(a))));
+    const qx = cx + Math.cos(mid + a) * paddleR, qy = cy + Math.sin(mid + a) * paddleR; // nearest arc point
+    const ex = b.x - qx, ey = b.y - qy, d = Math.hypot(ex, ey), reach = b.ss + paddleW / 2;
+    if (d >= reach || d === 0) continue;
+    const nx = ex / d, ny = ey / d;
+    b.x = qx + nx * reach; b.y = qy + ny * reach;
+    const rel = (b.dx + b.bx - p.fx) * nx + (b.dy + b.by - p.fy) * ny; // approach speed vs the paddle
+    if (rel < 0) {
+      const j = -(1 + paddleBounce) * rel;
+      b.bx += j * nx; b.by += j * ny;
+      const m = Math.hypot(b.bx, b.by);
+      if (m > swishMax) { b.bx *= swishMax / m; b.by *= swishMax / m; }
+      if (bumpReady(p)) playBump();
+    }
+  }
+}
+let lastPaddleBump = 0;
+function bumpReady() { if (check - lastPaddleBump < 3) return false; lastPaddleBump = check; return true; }
+function drawPaddle(p) {
+  const cx = p.x + Math.cos(p.ang) * paddleR, cy = p.y + Math.sin(p.ang) * paddleR; // circle centre ahead
+  ctx.beginPath();
+  ctx.arc(cx, cy, paddleR, p.ang + Math.PI - paddleHalf, p.ang + Math.PI + paddleHalf);
+  ctx.lineCap = 'round';
+  ctx.lineWidth = paddleW; ctx.strokeStyle = p.down ? 'rgba(230,250,250,0.9)' : 'rgba(200,235,235,0.5)';
+  ctx.stroke();
 }
 let paused = false, last = performance.now(), acc = 0;
 const dt = 1000 / framepersec;
@@ -225,16 +285,23 @@ cv.addEventListener('pointerdown', e => {
   const [x, y] = toSim(e), pad = slop(e);
   const mode = hitsBall(x, y, pad) ? 'ignite' : 'swish';
   pointers.set(e.pointerId, { mode, x, y, pad });
+  movePaddle(e.pointerId, x, y, true);
   if (mode === 'ignite') doMouseDown(x, y, pad);
 });
 cv.addEventListener('pointermove', e => {
   const p = pointers.get(e.pointerId);
-  if (!p) return;
   const [x, y] = toSim(e);
+  if (e.pointerType === 'mouse' || p) movePaddle(e.pointerId, x, y, !!p); // mouse paddle shows while hovering
+  if (!p) return;
   if (p.mode === 'ignite') doMouseDown(x, y, p.pad); else swish(p.x, p.y, x, y);
   p.x = x; p.y = y;
 });
-const lift = e => pointers.delete(e.pointerId);
+const lift = e => {
+  pointers.delete(e.pointerId);
+  if (e.pointerType === 'mouse') { const q = paddles.get(e.pointerId); if (q) q.down = false; }
+  else paddles.delete(e.pointerId); // fingers: paddle vanishes when lifted
+};
+cv.addEventListener('pointerleave', e => { if (e.pointerType === 'mouse' && !pointers.has(e.pointerId)) paddles.delete(e.pointerId); });
 cv.addEventListener('pointerup', lift); cv.addEventListener('pointercancel', lift);
 cv.addEventListener('contextmenu', e => e.preventDefault());
 addEventListener('keydown', e => {

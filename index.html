@@ -22,7 +22,7 @@
   #snd .x { display: none; } #snd.off .x { display: inline; } #snd.off .waves { display: none; }
   #fsx { display: none !important; }
   body.full #fs, body.full #hint { display: none; }           /* full screen keeps the sound button */
-  @media (pointer: coarse) { body.full #fsx { display: flex !important; } } /* touch: no keyboard, so an exit button */
+  @media (pointer: coarse) { body.full.needx #fsx { display: flex !important; } } /* one exit X: ours, unless Safari's full screen shows its own */
   #hint { position: fixed; bottom: 10px; left: 0; right: 0; text-align: center; pointer-events: none;
           transition: opacity 1s; padding: 0 12px; }
   /* phones / touch screens: bigger controls and text, clear of the notch and home bar */
@@ -52,6 +52,8 @@ const normalBallSize = 10, maxBallSize = 50, minBallSize = 5;
 const collisionsQ = true, chainReactionQ = true, spontaneousCombustionQ = true, reentryQ = true;
 const holdOffOnSpontaneousCombustionAfterClickQ = true, onlyOneCombustionAtATimeQ = true;
 const holdOffFor = 300, keepMovingQ = true, bumpWait = 10;
+const quietFrames = 90; // (new) no random explosions while any ball is exploding, nor for 3 s after
+let lastBoom = -Infinity, randomOK = true;
 // swish (new): a drag on empty space acts like a paddle in a fluid
 const swishRadius = 45, swishPush = 0.15, swishSteer = 0.05, swishDecay = 0.97, swishMax = 20;
 const emberFrames = 75, emberTurn = [.03, .08], emberTurnDecay = 0.96; // embers: ~2.5 s life (was ~1 s); turn rate rad/frame, decay
@@ -121,7 +123,7 @@ class Ball {
         const dd = Math.hypot(this.dx, this.dy);
         if (dd > maxBallSpeed) { this.dx *= maxBallSpeed / dd; this.dy *= maxBallSpeed / dd; }
         this.x += this.dx; this.y += this.dy;
-        if (combustingQ && Math.random() < .0002) { this.state = 1; playGrow(); }
+        if (randomOK && Math.random() < .0002) { this.state = 1; playGrow(); randomOK = false; }
         break;
       }
       case 1: this.ss += growthSpeed; this.alph += 2*growthSpeed; this.move(); if (this.ss >= maxBallSize) this.state = 2; break;
@@ -225,6 +227,8 @@ addEventListener('resize', resize); resize();
 
 function step() {
   check++;
+  if (balls.some(b => b.state === 1 || b.state === 2)) lastBoom = check;
+  randomOK = combustingQ && check - lastBoom > quietFrames;
   if (spontaneousCombustionQ && !combustingQ && check >= holdCheck + holdOffFor) combustingQ = true;
   collide();
   for (const b of balls) b.update();
@@ -397,10 +401,18 @@ const de = document.documentElement;
 // Touches on the canvas cancel the browser's own gestures (incl. swipe-down-to-exit) so they can't fight the paddle.
 ['touchstart', 'touchmove'].forEach(t => cv.addEventListener(t, e => e.preventDefault(), { passive: false }));
 const fsEl = () => document.fullscreenElement || document.webkitFullscreenElement;
-const setFull = on => document.body.classList.toggle('full', on);
+// Only Safari's own full screen draws an exit X; Chrome / Firefox / Edge on iPad and Android don't.
+const ua = navigator.userAgent;
+const safariDrawsX = /Safari/.test(ua) && !/CriOS|FxiOS|EdgiOS|Chrome|Chromium|Android|Firefox/.test(ua);
+const setFull = on => {
+  document.body.classList.toggle('full', on);
+  document.body.classList.toggle('needx', on && !(fsEl() && safariDrawsX));
+};
 function enterFull() {
-  hideHint(); setFull(true);
-  if (fsEl() || !(document.fullscreenEnabled || document.webkitFullscreenEnabled)) return;
+  hideHint();
+  if (fsEl()) return;
+  if (!(document.fullscreenEnabled || document.webkitFullscreenEnabled)) { setFull(true); return; } // iPhone: just hide controls
+  setFull(true);
   (de.requestFullscreen || de.webkitRequestFullscreen)?.call(de)?.catch?.(() => {});
 }
 function exitFull() {

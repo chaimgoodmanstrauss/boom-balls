@@ -37,14 +37,7 @@
           transition: opacity 1.5s; }
   #hint.gone { opacity: 0; }
   #hint.quick { transition: opacity .2s; }
-  /* iPhone (no full-screen API in any iOS browser): "full screen" makes the page scrollable so the
-     browser's toolbars collapse (programmatic scroll, or the first swipe), then locks it there. */
-  html.pfull, html.pfull body { height: auto; overflow: visible; }
-  html.pfull { overflow-y: auto; }
-  html.pfull body { position: static; display: block; min-height: 200vh; touch-action: pan-y; }
-  html.pfull canvas { position: fixed; left: 0; top: 0; touch-action: pan-y; }
-  html.pfull.locked body, html.pfull.locked canvas { touch-action: none; }
-  body.standalone #fs { display: none; }    /* launched from the home screen: already full screen */
+  body.standalone #fs, body.nofs #fs { display: none; }  /* home-screen launch: already full screen; iPhone browser: no full screen to offer */
 </style>
 </head>
 <body>
@@ -388,8 +381,13 @@ let actx = null, soundOn = false; // sound starts off
 const bumpBufs = [], growBufs = [];
 ['touchend', 'click'].forEach(t => addEventListener(t, () => unlockAudio(), { passive: true }));
 function unlockAudio() {
-  if (actx) { if (actx.state === 'suspended') actx.resume(); return; }
+  // iPhone: 'playback' session plays even with the ring/silent switch on silent (Safari and Chrome, iOS 16.4+)
+  try { if (navigator.audioSession) navigator.audioSession.type = 'playback'; } catch (e) {}
+  // iOS only really unlocks when something plays inside the gesture: a one-sample silent blip
+  const blip = () => { const b = actx.createBufferSource(); b.buffer = actx.createBuffer(1, 1, 22050); b.connect(actx.destination); b.start(0); };
+  if (actx) { if (actx.state !== 'running') { actx.resume(); blip(); } return; }
   actx = new (window.AudioContext || window.webkitAudioContext)();
+  blip();
   const load = (name, arr, i) => fetch('sounds/' + name).then(r => r.arrayBuffer())
     .then(buf => actx.decodeAudioData(buf)).then(d => { arr[i] = d; }).catch(() => {});
   for (let i = 0; i < 2; i++) load(`bonk${i}.mp3`, bumpBufs, i);
@@ -411,8 +409,7 @@ const de = document.documentElement;
 // Real browser full screen wherever it exists (desktop, iPad); where it doesn't (iPhone Safari)
 // "full screen" just clears the controls away. Either way the exit icon / W / X brings them back.
 // Touches on the canvas cancel the browser's own gestures (incl. swipe-down-to-exit) so they can't fight the paddle.
-const pScroll = () => de.classList.contains('pfull') && !de.classList.contains('locked'); // iPhone: toolbars still collapsing
-['touchstart', 'touchmove'].forEach(t => cv.addEventListener(t, e => { if (!pScroll()) e.preventDefault(); }, { passive: false }));
+['touchstart', 'touchmove'].forEach(t => cv.addEventListener(t, e => e.preventDefault(), { passive: false }));
 const fsEl = () => document.fullscreenElement || document.webkitFullscreenElement;
 // Only Safari's own full screen draws an exit X; Chrome / Firefox / Edge on iPad and Android don't.
 const ua = navigator.userAgent;
@@ -422,32 +419,20 @@ const setFull = on => {
   document.body.classList.toggle('needx', on && !(fsEl() && safariDrawsX));
 };
 function enterFull() {
-  if (fsEl()) return;
-  if (!(document.fullscreenEnabled || document.webkitFullscreenEnabled)) { setFull(true); if (!standalone) pageFull(true); return; } // iPhone: collapse the browser toolbars
+  if (fsEl() || noFs) return;
   setFull(true);
-  (de.requestFullscreen || de.webkitRequestFullscreen)?.call(de)?.catch?.(() => {});
+  (de.requestFullscreen || de.webkitRequestFullscreen).call(de)?.catch?.(() => setFull(false));
 }
 function exitFull() {
   setFull(false);
-  pageFull(false);
   if (fsEl()) (document.exitFullscreen || document.webkitExitFullscreen)?.call(document)?.catch?.(() => {});
 }
-// Launched from a home-screen icon the page is already full screen: no button needed.
+// iPhone (Safari or Chrome) has no page full screen at all, so no button there; launched from a
+// home-screen icon the page is already full screen, so no button there either.
 const standalone = navigator.standalone || matchMedia('(display-mode: fullscreen), (display-mode: standalone)').matches;
 document.body.classList.toggle('standalone', standalone);
-// iPhone: scroll the page so the browser collapses its toolbars; lock once they have (the canvas grows to fill).
-let baseH = 0;
-function pageFull(on) {
-  de.classList.toggle('pfull', on); de.classList.remove('locked');
-  if (on) { baseH = innerHeight; requestAnimationFrame(() => scrollTo(0, innerHeight)); }
-  else scrollTo(0, 0);
-}
-const checkBars = () => {
-  if (!de.classList.contains('pfull')) return;
-  de.classList.toggle('locked', innerHeight > baseH + 20);  // toolbars back (e.g. tapped the address bar): unlock for another swipe
-};
-addEventListener('resize', checkBars); visualViewport?.addEventListener('resize', checkBars);
-addEventListener('touchend', () => { if (de.classList.contains('pfull') && scrollY > 0) setTimeout(() => de.classList.add('locked'), 400); });
+const noFs = !(document.fullscreenEnabled || document.webkitFullscreenEnabled) || !(de.requestFullscreen || de.webkitRequestFullscreen);
+document.body.classList.toggle('nofs', noFs);
 const fsBtn = document.getElementById('fs');
 fsBtn.addEventListener('click', () => { enterFull(); fsBtn.blur(); });
 document.getElementById('fsx').addEventListener('click', exitFull);

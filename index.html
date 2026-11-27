@@ -30,10 +30,16 @@
     #bar button { padding: 10px 16px; border-radius: 8px; }
     #snd, #fs, #fsx { padding: 10px 12px; } #snd svg, #fs svg, #fsx svg { width: 26px; height: 26px; }
   }
+  #hint { position: fixed; left: 0; right: 0; top: 50%; transform: translateY(-50%); text-align: center; pointer-events: none;
+          color: #fff; font-size: 44px; font-style: italic; letter-spacing: .05em; text-shadow: 0 2px 8px rgba(0,0,0,.45);
+          transition: opacity 1.5s; }
+  #hint.gone { opacity: 0; }
+  #hint.quick { transition: opacity .2s; }
 </style>
 </head>
 <body>
 <canvas id="c"></canvas>
+<div id="hint">poke and push</div>
 <div id="bar"><button id="fs" title="Full screen (F); W or X to exit" aria-label="Full screen"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9V3h6"/><path d="M15 3h6v6"/><path d="M21 15v6h-6"/><path d="M9 21H3v-6"/></svg></button><button id="fsx" title="Exit full screen" aria-label="Exit full screen"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3v6H3"/><path d="M21 9h-6V3"/><path d="M15 21v-6h6"/><path d="M3 15h6v6"/></svg></button><button id="snd" class="off" title="Sound on/off (S)" aria-label="Sound on/off" aria-pressed="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H2v6h4l5 4z" fill="currentColor"/><g class="waves"><path d="M15.5 8.5a5 5 0 0 1 0 7"/><path d="M19 5a10 10 0 0 1 0 14"/></g><g class="x"><path d="m16 9 6 6"/><path d="m22 9-6 6"/></g></svg></button></div>
 <script>
 // Port of the 2007 Processing sketch "boom" (boom.pde + balls.pde).
@@ -331,6 +337,10 @@ function swish(x0, y0, x1, y1) {
     b.dx += vx * w * swishSteer; b.dy += vy * w * swishSteer; // re-aims; still capped at maxBallSpeed
   }
 }
+// ---- hint: fades slowly on its own, quickly as soon as a finger or mouse goes down ----
+const hint = document.getElementById('hint');
+setTimeout(() => hint.classList.add('gone'), 6000);
+addEventListener('pointerdown', () => hint.classList.add('quick', 'gone'), { capture: true, once: true });
 cv.addEventListener('pointerdown', e => {
   e.preventDefault();
   cv.setPointerCapture(e.pointerId); unlockAudio();

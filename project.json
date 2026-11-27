@@ -2,7 +2,7 @@
   "name": "Boom Balls",
   "cat": "Toys",
   "icon": "rings",
-  "desc": "Bouncing balls that blow up in chain reactions. Tap one to set it off, or swish them around with the paddle and smash them together.",
+  "desc": "Boom balls.",
   "path": "boom-balls/",
   "live": true,
   "img": "icons/boom-balls.jpg"

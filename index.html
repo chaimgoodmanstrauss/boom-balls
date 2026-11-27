@@ -17,29 +17,24 @@
   #bar { position: fixed; top: 10px; right: 12px; display: flex; gap: 8px; align-items: stretch; }
   #bar button { background: rgba(0,26,26,.6); border: 1px solid #336666; color: #7fbfbf; border-radius: 4px;
                 padding: 3px 8px; cursor: pointer; font: inherit; display: flex; align-items: center; justify-content: center; }
-  #snd { padding: 3px 6px; }
-  #snd svg { width: 18px; height: 18px; display: block; }
+  #snd, #fs { padding: 3px 6px; }
+  #snd svg, #fs svg, #fsx svg { width: 18px; height: 18px; display: block; }
   #snd .x { display: none; } #snd.off .x { display: inline; } #snd.off .waves { display: none; }
   #fsx { display: none !important; }
-  body.full #fs, body.full #hint { display: none; }           /* full screen keeps the sound button */
-  @media (pointer: coarse) { body.full.needx #fsx { display: flex !important; } } /* one exit X: ours, unless Safari's full screen shows its own */
-  #hint { position: fixed; bottom: 10px; left: 0; right: 0; text-align: center; pointer-events: none;
-          transition: opacity 1s; padding: 0 12px; }
+  body.full #fs { display: none; }           /* full screen keeps the sound button */
+  @media (pointer: coarse) { body.full.needx #fsx { display: flex !important; } } /* one exit control: ours, unless Safari's full screen shows its own */
   /* phones / touch screens: bigger controls and text, clear of the notch and home bar */
   @media (pointer: coarse) {
     body { font-size: 17px; }
     #bar { top: calc(10px + env(safe-area-inset-top)); right: calc(10px + env(safe-area-inset-right)); }
     #bar button { padding: 10px 16px; border-radius: 8px; }
-    #snd, #fsx { padding: 10px 12px; } #snd svg { width: 26px; height: 26px; }
-    #hint { bottom: calc(14px + env(safe-area-inset-bottom)); }
+    #snd, #fs, #fsx { padding: 10px 12px; } #snd svg, #fs svg, #fsx svg { width: 26px; height: 26px; }
   }
-  @media (pointer: coarse) { .keys { display: none; } }
 </style>
 </head>
 <body>
 <canvas id="c"></canvas>
-<div id="bar"><button id="fs" title="Full screen (F); W or X to exit">full screen</button><button id="fsx" title="Exit full screen" aria-label="Exit full screen">✕</button><button id="snd" class="off" title="Sound on/off (S)" aria-label="Sound on/off" aria-pressed="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H2v6h4l5 4z" fill="currentColor"/><g class="waves"><path d="M15.5 8.5a5 5 0 0 1 0 7"/><path d="M19 5a10 10 0 0 1 0 14"/></g><g class="x"><path d="m16 9 6 6"/><path d="m22 9-6 6"/></g></svg></button></div>
-<div id="hint">Tap a ball to set it off (drag on to set off more). Drag on empty space to swish the balls around.<span class="keys"> Space pauses.</span></div>
+<div id="bar"><button id="fs" title="Full screen (F); W or X to exit" aria-label="Full screen"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9V3h6"/><path d="M15 3h6v6"/><path d="M21 15v6h-6"/><path d="M9 21H3v-6"/></svg></button><button id="fsx" title="Exit full screen" aria-label="Exit full screen"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3v6H3"/><path d="M21 9h-6V3"/><path d="M15 21v-6h6"/><path d="M3 15h6v6"/></svg></button><button id="snd" class="off" title="Sound on/off (S)" aria-label="Sound on/off" aria-pressed="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H2v6h4l5 4z" fill="currentColor"/><g class="waves"><path d="M15.5 8.5a5 5 0 0 1 0 7"/><path d="M19 5a10 10 0 0 1 0 14"/></g><g class="x"><path d="m16 9 6 6"/><path d="m22 9-6 6"/></g></svg></button></div>
 <script>
 // Port of the 2007 Processing sketch "boom" (boom.pde + balls.pde).
 // Constants keep the original's integer-division values (e.g. 70/30 = 2).
@@ -338,7 +333,7 @@ function swish(x0, y0, x1, y1) {
 }
 cv.addEventListener('pointerdown', e => {
   e.preventDefault();
-  cv.setPointerCapture(e.pointerId); unlockAudio(); hideHint();
+  cv.setPointerCapture(e.pointerId); unlockAudio();
   const [x, y] = toSim(e), pad = slop(e);
   const mode = hitsBall(x, y, pad) ? 'ignite' : 'swish';
   pointers.set(e.pointerId, { mode, x, y, pad });
@@ -367,9 +362,6 @@ addEventListener('keydown', e => {
   else if (e.key === 'f' || e.key === 'F') enterFull();
   else if ('wWxX'.includes(e.key) && e.key.length === 1) exitFull();
 });
-const hint = document.getElementById('hint');
-function hideHint() { hint.style.opacity = 0; }
-setTimeout(hideHint, 8000);
 
 // ---- sound (bonk0-1 for bumps, swirl0-8 for ignitions, as in the original) ----
 let actx = null, soundOn = false; // sound starts off
@@ -397,7 +389,7 @@ sndBtn.addEventListener('click', () => { toggleSound(); sndBtn.blur(); });
 // ---- full screen: button or F to enter; W or X (or Esc) to exit ----
 const de = document.documentElement;
 // Real browser full screen wherever it exists (desktop, iPad); where it doesn't (iPhone Safari)
-// "full screen" just clears the controls away. Either way the ✕ / W / X brings them back.
+// "full screen" just clears the controls away. Either way the exit icon / W / X brings them back.
 // Touches on the canvas cancel the browser's own gestures (incl. swipe-down-to-exit) so they can't fight the paddle.
 ['touchstart', 'touchmove'].forEach(t => cv.addEventListener(t, e => e.preventDefault(), { passive: false }));
 const fsEl = () => document.fullscreenElement || document.webkitFullscreenElement;
@@ -409,7 +401,6 @@ const setFull = on => {
   document.body.classList.toggle('needx', on && !(fsEl() && safariDrawsX));
 };
 function enterFull() {
-  hideHint();
   if (fsEl()) return;
   if (!(document.fullscreenEnabled || document.webkitFullscreenEnabled)) { setFull(true); return; } // iPhone: just hide controls
   setFull(true);

@@ -61,6 +61,7 @@ let lastBoom = -Infinity, randomOK = true;
 // swish (new): a drag on empty space acts like a paddle in a fluid
 const swishRadius = 45, swishPush = 0.15, swishSteer = 0.05, swishDecay = 0.97, swishMax = 20;
 const emberFrames = 75, emberTurn = [.03, .08], emberTurnDecay = 0.96; // embers: ~2.5 s life (was ~1 s); turn rate rad/frame, decay
+const winkFrames = 6; // (new) ember winks out: rapid shrink over its last ~0.2 s
 const explodeAlpha = 0.55, emberShade = 0.6; // opacity at full explosion radius; ember brightness (new)
 const smashSpeed = 5; // closing speed that sets two colliding balls off (unswished max is 4)
 
@@ -158,7 +159,9 @@ class Ball {
       ctx.fillStyle = rgba(P.ember, P.light, t, lerp(1, explodeAlpha, t));
     } else if (this.state === 3) ctx.fillStyle = rgba(P.ember, P.ember, 0, 1);
     else ctx.fillStyle = this.col;
-    ctx.beginPath(); ctx.arc(this.x, this.y, Math.max(0, Math.trunc(this.ss)), 0, 2*Math.PI); ctx.fill();
+    let r = Math.max(0, Math.trunc(this.ss));
+    if (this.state === 3 && this.life < winkFrames) r = this.ss * (this.life / winkFrames) ** 2; // wink out
+    ctx.beginPath(); ctx.arc(this.x, this.y, r, 0, 2*Math.PI); ctx.fill();
   }
 }
 
@@ -197,7 +200,8 @@ function collide() {
       const tt = -((a.dx - b.dx) * dX + (a.dy - b.dy) * dY) / dd;
       if (tt > 0) {
         xV[i] += tt*dX; xV[j] -= tt*dX; yV[i] += tt*dY; yV[j] -= tt*dY;
-        if (!bumpCounter[i][j]) { doBump = true; bumpCounter[i][j] = bumpWait; }
+        if (!bumpCounter[i][j]) { doBump = true; bumpCounter[i][j] = bumpWait;
+          const f = b.ss / (a.ss + b.ss); spark(b.x + dX * f, b.y + dY * f, (a.dx + a.bx + b.dx + b.bx) / 2, (a.dy + a.by + b.dy + b.by) / 2); }
       }
     }
     const ignite = (src, dst) => {
@@ -211,6 +215,19 @@ function collide() {
   if (doBump) playBump();
   if (doGrow) playGrow();
   for (let i = 0; i < numBalls; i++) { balls[i].dx += xV[i]; balls[i].dy += yV[i]; }
+}
+
+// ---- sparks (new): a single small point of light at each bump, in step with the bonk ----
+const sparks = [], sparkFrames = 5;
+function spark(x, y, dx, dy) { sparks.push({ x, y, dx, dy, life: sparkFrames }); } // drifts with the pair's average velocity
+function stepSparks() {
+  for (let k = sparks.length - 1; k >= 0; k--) { const s = sparks[k]; s.x += s.dx; s.y += s.dy; if (--s.life <= 0) sparks.splice(k, 1); }
+}
+function drawSparks() {
+  for (const s of sparks) {
+    ctx.fillStyle = `rgba(255,250,220,${s.life / sparkFrames})`;
+    ctx.beginPath(); ctx.arc(s.x, s.y, 1.5, 0, 2 * Math.PI); ctx.fill();
+  }
 }
 
 // ---- drawing / timing ----
@@ -237,10 +254,12 @@ function step() {
   collide();
   for (const b of balls) b.update();
   paddleFrame();
+  stepSparks();
 }
 function render() {
   ctx.fillStyle = '#003333'; ctx.fillRect(0, 0, winx, winy);
   for (const b of balls) b.display();
+  drawSparks();
   for (const p of paddles.values()) drawPaddle(p);
 }
 // ---- rendered cursor: a shallow C-shaped paddle seen from above, hollow facing its motion ----
@@ -284,7 +303,7 @@ function paddleHit(p) { // solid paddle: push balls out of the arc and bounce th
       b.bx += j * nx; b.by += j * ny;
       const m = Math.hypot(b.bx, b.by);
       if (m > swishMax) { b.bx *= swishMax / m; b.by *= swishMax / m; }
-      if (bumpReady(p)) playBump();
+      if (bumpReady(p)) { playBump(); spark(qx + nx * paddleW / 2, qy + ny * paddleW / 2, (b.dx + b.bx + p.fx) / 2, (b.dy + b.by + p.fy) / 2); }
     }
   }
 }
@@ -380,14 +399,22 @@ addEventListener('keydown', e => {
 let actx = null, soundOn = false; // sound starts off
 const bumpBufs = [], growBufs = [];
 ['touchend', 'click'].forEach(t => addEventListener(t, () => unlockAudio(), { passive: true }));
+// iPhone: a 'playback' audio session plays even with the ring/silent switch on silent (iOS 16.4+).
+// Set once, before any audio context exists (setting it again on every tap was suspect).
+try { if (navigator.audioSession) navigator.audioSession.type = 'playback'; } catch (e) {}
+// After the phone sleeps (or the tab is backgrounded) iOS leaves the old context dead: resume() never
+// brings it back. So the first gesture after coming back builds a fresh context; decoded sounds are reused.
+let audioStale = false;
+document.addEventListener('visibilitychange', () => { if (document.hidden) audioStale = true; });
+addEventListener('pageshow', e => { if (e.persisted) audioStale = true; });
 function unlockAudio() {
-  // iPhone: 'playback' session plays even with the ring/silent switch on silent (Safari and Chrome, iOS 16.4+)
-  try { if (navigator.audioSession) navigator.audioSession.type = 'playback'; } catch (e) {}
   // iOS only really unlocks when something plays inside the gesture: a one-sample silent blip
   const blip = () => { const b = actx.createBufferSource(); b.buffer = actx.createBuffer(1, 1, 22050); b.connect(actx.destination); b.start(0); };
-  if (actx) { if (actx.state !== 'running') { actx.resume(); blip(); } return; }
+  if (actx && !audioStale) { if (actx.state !== 'running') { actx.resume(); blip(); } return; }
+  const old = actx; audioStale = false;
   actx = new (window.AudioContext || window.webkitAudioContext)();
   blip();
+  if (old) { old.close?.().catch(() => {}); return; } // sounds already loaded
   const load = (name, arr, i) => fetch('sounds/' + name).then(r => r.arrayBuffer())
     .then(buf => actx.decodeAudioData(buf)).then(d => { arr[i] = d; }).catch(() => {});
   for (let i = 0; i < 2; i++) load(`bonk${i}.mp3`, bumpBufs, i);
